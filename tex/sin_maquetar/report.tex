@@ -1,0 +1,838 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{hyperref}
+\geometry{a4paper, margin=1in}
+\graphicspath{{../figs/}}
+
+% --- Theorem environments ---
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{assumption}{Assumption}
+
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+% Number theorem-like envs by section
+\numberwithin{theorem}{section}
+\numberwithin{definition}{section}
+\numberwithin{remark}{section}
+\numberwithin{lemma}{section}
+\numberwithin{assumption}{section}
+
+% --- Macros ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\ip}[2]{\left\langle #1,\,#2 \right\rangle}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\E}{\mathbb{E}}
+
+% --- Project-specific Notation ---
+\newcommand{\tindex}{k^\star}
+\newcommand{\uk}[1]{u_{#1}}
+\newcommand{\utarget}{u}
+\newcommand{\ukstar}{\uk{\tindex}}
+\newcommand{\pdelta}[1]{p_{#1}\Delta w_{#1}}
+
+\title{The Geometry of Privacy: A Two-Stage Analysis of Generative Membership Inference in Federated Learning}
+\author{Borja Arroyo Galende}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We study Membership Inference Attack risk in Federated Learning through a two-stage lens that separates
+(i) whether a target client's contribution is detectable after aggregation and system noise (\textbf{Stage I: Signal Survival}) from
+(ii) whether a surviving contribution induces a generative membership score change attributable to the target's private data (\textbf{Stage II: Signal Attribution}).
+Stage I models aggregation as a target--background decomposition and shows that detectability hinges on target--background alignment,
+which can induce cancellation. Stage II connects the surviving target component to a generative MIA score~\cite{Galende2025Membership}
+via a local path representation and Lipschitz/smoothness bounds, avoiding architecture-specific assumptions.
+The leading attribution term is controlled by the alignment between the target update and the target-data score geometry at a suitable baseline.
+We verify the theoretical bounds and illustrate risk trajectories under several scenarios.
+\end{abstract}
+
+\paragraph{Keywords.}
+Federated learning; membership inference attack; generative models; privacy.
+
+\section{Introduction}
+
+Motivated by strict data privacy regulations like the General Data Protection Regulation (GDPR)~\cite{gdpr} and the Health Insurance Portability and Accountability Act (HIPAA)~\cite{hipaa}, and the need to leverage data across sensitive domains like healthcare and finance, Federated Learning (FL) has emerged as an established paradigm for collaborative model training~\cite{mcmahan2017communication,kairouz2021advances}. FL fundamentally alters the privacy landscape by inserting an aggregation layer between a client's local data and the released global model.
+
+FL deployments generally fall into two categories, each presenting distinct privacy challenges: cross-device and cross-silo~\cite{kairouz2021advances}. Cross-device FL involves a massive number of unreliable edge devices (e.g., smartphones) with small local datasets, where the primary security concern often involves malicious clients attempting data poisoning or isolating specific updates~\cite{mothukuri2021survey}. Conversely, cross-silo FL typically involves a smaller number of highly reliable institutional participants (e.g., hospitals or banks) with large datasets. In this setting, the threat model often assumes honest-but-curious participants who actively attempt to infer characteristics of other silos' datasets from the shared model updates, making them particularly vulnerable to Membership Inference Attacks (MIAs)~\cite{yin2021comprehensive}.
+
+Despite these vulnerabilities, the aggregation process itself complicates membership inference: a target client's update may be partially or fully canceled by the contribution of other clients~\cite{nasr2019comprehensive,melis2019exploiting},
+and even when a target contribution is detectable, it is not guaranteed to be attributable to the target's private data under a generative score~\cite{Galende2025Membership,carlini2022membership}.
+We therefore decompose MIA risk into two distinct questions:
+\textbf{Stage I (Signal Survival)} explores whether the target contribution remains detectable after (robust) aggregation~\cite{zhu2019deep,geiping2020inverting}, and
+\textbf{Stage II (Signal Attribution)} assesses whether a surviving contribution changes a generative membership score in a way attributable to the target's data~\cite{Galende2025Membership,carlini2022membership}.
+This separation distinguishes what aggregation can reveal from what a generative score can attribute.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=1.5em]
+    \item We formalize Stage I as a target--background decomposition and identify alignment-driven cancellation as the key geometric factor governing survival.
+    \item We derive a robust Stage II attribution bound based on a path representation and smoothness, yielding a linear proxy with an explicit quadratic correction.
+    \item We define a two-stage risk metric (TS-MIA) that combines survival and attribution into a single round-level success probability.
+    \item We empirically verify the bounds and visualize the attribution geometry and risk trajectories under IID and non-IID data partitions.
+\end{itemize}
+
+The rest of the paper is organized as follows. Section~\ref{sec:stage1} presents Stage I (signal survival), Section~\ref{sec:stage2} presents Stage II (signal attribution),
+Section~\ref{sec:two_stage_metric} defines the two-stage risk metric, and Section~\ref{sec:sim_results} reports empirical verification results.
+
+\subsection{Notation}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\ip{u}{v}$ & Inner product \\
+$\norm{u}$ & Euclidean norm ($\norm{u} \coloneqq \sqrt{\ip{u}{u}}$) \\
+$K$ & Number of clients in a round \\
+$\tindex$ & Target client index \\
+$\Delta w_k \in \R^d$ & Client $k$ local update vector (one FL round) \\
+$p_k$ & Aggregation weight (FedAvg), $\sum_{k=1}^K p_k=1$, $p_k\ge0$ \\
+$\Delta W \in \R^d$ & Released global update, $\Delta W=\sum_{k=1}^K \pdelta{k}$ \\
+$\uk{k}$ & Weighted client update, $\uk{k} \coloneqq \pdelta{k}$ \\
+$\utarget$ & Target weighted update, $\utarget \coloneqq \ukstar = \pdelta{\tindex}$ \\
+$B$ & Background aggregate, $B\coloneqq \sum_{j\neq \tindex} \uk{j}$ \\
+$\lambda$ & Cosine alignment between $\utarget$ and $B$ \\
+$D_{\tindex}$ & Private dataset of the target client \\
+$W$ & Model parameters (vector in $\R^d$) \\
+$\ell(x;W)$ & Generative score (log-likelihood or differentiable surrogate) \\
+$\sigma(z)$ & Sigmoid, $\sigma(z)=\frac{1}{1+e^{-z}}$ \\
+$\phi(z)$ & Centered sigmoid, $\phi(z)=\sigma(z)-\tfrac12$ \\
+$s$ & Mean score vector, $s\coloneqq \E_{x\sim D_{\tindex}}[\nabla_W \ell(x;W_{\mathrm{base}})]$ \\
+$\gamma$ & Cosine alignment between $\utarget$ and $s$ \\
+$a(x)$ & Directional score, $a(x)\coloneqq \ip{\nabla_W \ell(x;W_{\mathrm{base}})}{\utarget}$ \\
+$\wedge$ & Logical AND (conjunction) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Preliminaries: Aggregation, Threat Model and Regularity}
+
+\subsection{Federated aggregation and decomposition}
+
+Many prominent federated aggregation protocols, including Federated Averaging (FedAvg)~\cite{mcmahan2017communication} and various personalized or clustered variants~\cite{kairouz2021advances}, compute the global update $\Delta W$ as a weighted linear combination of client contributions:
+\begin{equation}
+\label{eq:fedavg}
+\Delta W = \sum_{k=1}^K \pdelta{k} = \sum_{k=1}^K \uk{k}.
+\end{equation}
+Fix a target client $\tindex$ and decompose the global update as
+\begin{equation}
+\label{eq:decomp}
+\Delta W = \utarget + B,
+\end{equation}
+where $\utarget \coloneqq \ukstar$ is the target weighted update and $B \coloneqq \sum_{j\neq \tindex} \uk{j}$ is the background aggregate.
+This decomposition is the basis for Stage I: signal survival, and Stage II: signal attribution.
+
+\subsection{Attacker observation model}
+
+We consider a \textit{passive global attacker} (or \textit{honest-but-curious} server~\cite{mothukuri2021survey,kairouz2021advances}) that observes the released update up to a noise floor:
+\begin{equation}
+\label{eq:obs}
+Y=\Delta W+\xi,
+\end{equation}
+where $\xi$ models aggregate uncertainty and perturbations (e.g., stochasticity, quantization~\cite{kang2024effect}, secure aggregation artifacts~\cite{gilbert2022secure}, or injected noise for differential privacy~\cite{kim2022effects}).
+The attacker does not observe individual updates $\Delta w_k$ nor the target dataset $D_{\tindex}$.
+
+Rather than modelling the attack itself, we model the worst case scenario for the target client to assess the maximum possible risk. Therefore, we assume that the adversary has access to both $B$ and $\utarget$.
+
+\subsection{Regularity definitions}
+
+\begin{definition}[Analytic Regularity]
+\label{def:lipschitz_smooth}
+Let $\Omega\subseteq\R^d$ and let $f:\Omega\to\R$.
+\begin{itemize}[leftmargin=1.5em]
+    \item $f$ is \emph{$G$-Lipschitz} on $\Omega$ if for all $a,b\in\Omega$,
+    \[
+    |f(a)-f(b)|\le G\norm{a-b}.
+    \]
+    \item $f$ is \emph{$L$-smooth} on $\Omega$ if $\nabla f$ exists on $\Omega$ and is \emph{$L$-Lipschitz} on $\Omega$, i.e., for all $a,b\in\Omega$,
+    \[
+    \norm{\nabla f(a)-\nabla f(b)}\le L\norm{a-b}.
+    \]
+\end{itemize}
+\end{definition}
+
+\section{Stage I: Signal Survival}
+\label{sec:stage1}
+
+Stage I asks whether the target contribution $\utarget$ can survive aggregation and be detectable under the observation model \eqref{eq:obs}.
+
+\subsection{Target--background alignment and aggregation energy}
+
+\begin{definition}[Target--background alignment]
+\label{def:lambda}
+In the Euclidean space $\R^d$, the inner product between two nonzero vectors $\utarget$ and $B$ geometrically encodes their magnitudes and the angle $\theta \in [0, \pi]$ between them:
+\begin{equation}
+\label{eq:inner_prod_geom}
+\ip{\utarget}{B} = \norm{\utarget}\,\norm{B}\cos(\theta).
+\end{equation}
+This standard relation motivates the definition of their \emph{alignment} $\lambda$ as this cosine similarity:
+\begin{equation}
+\label{eq:lambda}
+\lambda \coloneqq \cos(\theta)
+= \frac{\ip{\utarget}{B}}{\norm{\utarget}\,\norm{B}}.
+\end{equation}
+\end{definition}
+
+\begin{lemma}[Alignment bounds]
+\label{prop:lambda_bounds}
+The geometric definition $\cos(\theta) \in [-1, 1]$ directly imposes that the alignment is bounded as $-1 \le \lambda \le 1$. We can explicitly verify that the algebraic inner product in $\R^d$ naturally respects this geometric constraint via the Cauchy--Schwarz inequality~\cite{steele2004cauchy}:
+\begin{equation*}
+\big|\ip{\utarget}{B}\big| \le \norm{\utarget}\norm{B} \quad \implies \quad -1 \le \frac{\ip{\utarget}{B}}{\norm{\utarget}\norm{B}} \le 1.
+\end{equation*}
+\end{lemma}
+
+Finally, in FedAvg one often has $\utarget = p_{\tindex}\Delta w_{\tindex}$ with $p_{\tindex}>0$.
+Whenever $\Delta w_{\tindex}\neq 0$, scaling by a positive constant does not change cosine similarity,
+so \eqref{eq:lambda} is equivalent to $\cos(\Delta w_{\tindex},B)$, i.e.,
+\begin{equation}
+\lambda
+= \frac{\ip{\Delta w_{\tindex}}{B}}{\norm{\Delta w_{\tindex}}\,\norm{B}}.
+\end{equation}
+
+\begin{lemma}[Energy decomposition with an interference term]
+\label{prop:energy}
+The squared norm of the released update satisfies:
+\begin{equation}
+\label{eq:energy_lambda}
+\norm{\Delta W}^2
+=
+\norm{\utarget}^2 + \norm{B}^2 + 2\,\norm{\utarget}\,\norm{B}\,\lambda.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+To establish this, we expand the squared Euclidean norm of the sum $\Delta W = \utarget + B$ using the linearity and symmetry properties of the inner product space:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Definition of Norm:} The squared norm is the inner product of the vector with itself:
+    \begin{equation*}
+    \norm{\Delta W}^2 = \ip{\utarget + B}{\utarget + B}.
+    \end{equation*}
+
+    \item \textbf{Bilinearity Expansion:} Distributing the inner product across the sum gives four terms:
+    \begin{equation*}
+    \ip{\utarget + B}{\utarget + B} = \ip{\utarget}{\utarget} + \ip{\utarget}{B} + \ip{B}{\utarget} + \ip{B}{B}.
+    \end{equation*}
+
+    \item \textbf{Symmetry and Substitution:} By symmetry, $\ip{B}{\utarget} = \ip{\utarget}{B}$. Substituting $\norm{\utarget}^2 = \ip{\utarget}{\utarget}$ and $\norm{B}^2 = \ip{B}{B}$ yields:
+    \begin{equation*}
+    \norm{\Delta W}^2 = \norm{\utarget}^2 + \norm{B}^2 + 2\ip{\utarget}{B}.
+    \end{equation*}
+
+    \item \textbf{Geometric Substitution:} To obtain \eqref{eq:energy_lambda}, we use the geometric property of the inner product introduced in Definition~\ref{def:lambda}. Assuming $\utarget \neq 0$ and $B \neq 0$, we substitute $\ip{\utarget}{B} = \norm{\utarget}\norm{B}\cos(\theta) = \norm{\utarget}\norm{B}\lambda$:
+    \begin{equation*}
+    \norm{\Delta W}^2 = \norm{\utarget}^2 + \norm{B}^2 + 2\,\norm{\utarget}\,\norm{B}\,\lambda. \qedhere
+    \end{equation*}
+\end{enumerate}
+\end{proof}
+
+\paragraph{Aggregation cancellation.}
+If $\lambda<0$, the cross-term in \eqref{eq:energy_lambda} is negative. In the extreme case $B \to -\utarget$, the released update $\Delta W \to 0$.
+Consequently, the observation $Y$ can be dominated by the noise $\xi$ if $\norm{\xi}$ is large enough.
+
+\subsection{A scale-free survival proxy}
+
+We introduce a proxy that captures the target's relative contribution to the released update energy.
+
+\begin{definition}[Signal-to-Update Ratio (SUR)]
+\label{def:sur}
+Define
+\begin{equation}
+\label{eq:sur}
+\mathrm{SUR} \coloneqq \frac{\norm{\utarget}}{\norm{\Delta W}},
+\end{equation}
+whenever $\Delta W\neq 0$. Equivalently, $\mathrm{SUR}^2=\norm{\utarget}^2/\norm{\Delta W}^2$.
+\end{definition}
+\noindent We compute survival using \eqref{eq:sur} throughout Stage I.
+
+\begin{lemma}[Closed form in terms of magnitude ratio and alignment]
+\label{prop:sur_closed}
+Assume $\Delta W\neq 0$ and $\utarget\neq 0$, and define $r\coloneqq \norm{B}/\norm{\utarget}$.
+Then
+\begin{equation}
+\label{eq:sur_r}
+\mathrm{SUR}^2 = \frac{1}{1+r^2+2r\lambda}.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Divide \eqref{eq:energy_lambda} by $\norm{\utarget}^2$ to get $\norm{\Delta W}^2/\norm{\utarget}^2 = 1+r^2+2r\lambda$ and invert.
+\end{proof}
+
+\subsection{Noise-limited detectability}
+
+SUR organizes the geometry of survival, but detectability under \eqref{eq:obs} also depends on the noise floor and the attacker test.
+
+\begin{assumption}[Necessary noise-floor condition for detectability]
+\label{cond:noise}
+Assume there exists a detection threshold $\tau_{\mathrm{noise}}>0$ induced by the observation model \eqref{eq:obs} and the attacker test.
+A necessary condition for non-trivial detection of the target component is
+\begin{equation}
+\label{eq:noise_cond}
+\mathrm{SUR} > \tau_{\mathrm{noise}}.
+\end{equation}
+When cancellation is severe ($B \to -\utarget$), $\norm{\Delta W} \to 0$ and $\mathrm{SUR}$ diverges; however, the aggregate itself carries negligible information, so detectability is noise-limited.
+\end{assumption}
+
+\begin{remark}[Context-dependent survival thresholds]
+Assumption~\ref{cond:noise} is intentionally general, as the precise formulation of the threshold $\tau_{\mathrm{noise}}$ depends heavily on the specific threat model and the defensive mechanisms implemented in the FL system. For instance:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Differential Privacy (DP):} If the server injects carefully calibrated noise to ensure DP guarantees~\cite{kim2022effects}, $\tau_{\mathrm{noise}}$ scales directly with the variance of this injected noise, requiring a stronger target signal to avoid being drowned out.
+    \item \textbf{Quantization:} When client updates are compressed or quantized to reduce communication bandwidth, the discretization artifacts inherently introduce bounded noise into the aggregate observation~\cite{kang2024effect}, establishing a baseline threshold below which tiny signals are lost to rounding.
+    \item \textbf{Secure Aggregation (SecAgg):} While SecAgg prevents the server from viewing individual updates, practical implementations can still suffer from artifacts, dropouts, or protocol-specific noise boundaries~\cite{gilbert2022secure} that an attacker would need to overcome to reconstruct a reliable signal from the sum.
+\end{itemize}
+By abstracting these effects into $\tau_{\mathrm{noise}}$, Stage I elegantly isolates the fundamental geometry of aggregation, via the magnitude ratio $r$ and alignment $\lambda$, from these highly system-dependent noise instantiations.
+\end{remark}
+
+\section{Stage II: Signal Attribution}
+\label{sec:stage2}
+
+Stage II asks: if the target component survives (Stage I, i.e., \eqref{eq:noise_cond} is fulfilled), does it lead to an attributable change in a generative membership score on samples from $D_{\tindex}$?
+
+\subsection{Generative score and centered advantage}
+
+Galende et al.~\cite{Galende2025Membership} cast membership inference as a Bayesian hypothesis test and show, via the Neyman--Pearson lemma~\cite{neyman1933ix}, that the optimal test statistic for deciding whether a query sample $x$ belongs to the training set is the \emph{log-likelihood ratio}
+$\ln p(x\mid\theta_v)-\ln p(x\mid\theta_r)$,
+where $\theta_v$ denotes the victim model and $\theta_r$ a reference model trained on non-overlapping data.
+The ratio isolates the \emph{effect} of having seen $x$ during training from the sample's intrinsic complexity, and the sigmoid $\sigma$ maps it to a membership probability in $[0,1]$.
+
+We adopt this likelihood-ratio viewpoint in the federated setting.
+Let $\ell(x;W)$ be a generative score assigned to example $x$ by parameters $W$.
+In many generative settings $\ell$ is a log-likelihood $\log P(x\mid W)$~\cite{carlini2022membership}; more generally, it can be any differentiable surrogate that correlates with sample fit, without assuming a specific architecture.
+Because raw scores $\ell(x;W)$ are inherently uncalibrated, directly comparing them across samples is unreliable.
+Instead, mirroring the role of the reference model in~\cite{Galende2025Membership}, we measure the \emph{score advantage}: the change in $\ell$ caused by a specific parameter update.
+Just as the likelihood ratio compares a victim model against a reference to cancel out the intrinsic difficulty of generating $x$, the score advantage compares the model before and after an update to isolate the exact effect of that specific contribution.
+
+In the federated setting, however, the attacker cannot observe the isolated target update $\utarget$ because the server aggregates it with the background updates $B$. We therefore distinguish two advantage metrics:
+\begin{align}
+    \Delta\ell(x) \coloneqq \ell(x;W + \utarget) - \ell(x;W)
+\end{align}
+is the \emph{true (albeit unobservable) score advantage} evaluated on the target's isolated contribution $\utarget$, while
+\begin{align}
+    \Delta\tilde\ell(x) \coloneqq \ell(x;W + \Delta W) - \ell(x;W)
+\end{align}
+is the \emph{empirical score advantage} computed from the aggregated update $\Delta W = \utarget + B$. Stage~II bounds the deviation between these two quantities.
+
+Following~\cite{Galende2025Membership}, where the sigmoid maps the log-likelihood ratio to a membership probability, we project the unbounded score advantage onto $[0,1]$ via $\sigma(z) = \frac{1}{1+e^{-z}}$. Because a neutral advantage evaluates to $\sigma(0)=0.5$, we re-center the mapping so that any positive increase in sample fit yields a strictly positive metric:
+\begin{equation}
+\label{eq:phi_def}
+\phi(z) \coloneqq \sigma(z) - \frac{1}{2}.
+\end{equation}
+
+\begin{lemma}[Properties of $\sigma$ and $\phi$]
+\label{lem:sig_props}
+The sigmoid $\sigma$ is smooth, strictly increasing, and satisfies $\sigma(0)=\tfrac12$.
+Moreover:
+\begin{itemize}[leftmargin=1.5em]
+    \item (\textbf{Bounded}) $0<\sigma(z)<1$ for all $z\in\R$, hence $-\tfrac12<\phi(z)<\tfrac12$.
+    \item (\textbf{Lipschitz}) $\sigma$ is $\tfrac14$-Lipschitz: for all $a,b\in\R$,
+    \[
+    |\sigma(a)-\sigma(b)| \le \frac14 |a-b|.
+    \]
+    Equivalently, $\phi$ is $\tfrac14$-Lipschitz.
+\end{itemize}
+\end{lemma}
+
+\begin{proof}
+By definition, $\sigma(z) = \frac{1}{1+e^{-z}}$, so $\sigma(0) = \frac{1}{1+1} = \frac{1}{2}$. The remaining properties are derived as follows:
+\begin{enumerate}[label=(\roman*), leftmargin=1.5em]
+    \item \textbf{Boundedness:} Because $e^{-z} > 0$ for all $z \in \R$, the denominator $1+e^{-z}$ is always strictly greater than $1$. Thus, $0 < \frac{1}{1+e^{-z}} < 1$, which directly implies $-\tfrac12 < \phi(z) < \tfrac12$.
+    \item \textbf{Lipschitz continuity:} The derivative of the sigmoid is given by $\sigma'(z) = \sigma(z)(1-\sigma(z))$. Because $\sigma(z) \in (0, 1)$, this product is strictly positive, meaning $\sigma$ is strictly increasing. Furthermore, the quadratic expression $y(1-y)$ is maximized at $y = \tfrac12$, yielding a maximum derivative of $\tfrac14$ at $z=0$. 
+    
+    By the Mean Value Theorem, for any $a, b \in \R$ with $a < b$, there exists some $c \in (a, b)$ such that:
+    \[
+    \frac{\sigma(b) - \sigma(a)}{b - a} = \sigma'(c).
+    \]
+    Taking the absolute value and substituting the global upper bound $\sup_z |\sigma'(z)| = \tfrac14$, we obtain:
+    \[
+    |\sigma(a)-\sigma(b)| \le \frac14 |a-b|.
+    \]
+    An inequality of the form $|f(a)-f(b)| \leq L |a-b|$ for all points in the domain is exactly the mathematical definition of an $L$-Lipschitz continuous function. Therefore, the sigmoid $\sigma$ is $\tfrac14$-Lipschitz. Since $\phi(z)$ is simply a vertically translated $\sigma(z)$, it shares the same derivative $\phi'(z) = \sigma'(z)$ and thus the same $\tfrac14$-Lipschitz bound.
+\end{enumerate}
+\end{proof}
+
+\subsection{Baseline for attribution}
+
+Recall that the empirical advantage $\Delta\tilde\ell$ measures the total score change caused by the aggregated update $\Delta W = \utarget + B$, whereas the unobservable advantage $\Delta\ell$ measures the isolated effect of $\utarget$ starting from the initial model $W$.
+To evaluate what portion of the total empirical change is strictly attributable to the target client, we must evaluate the target's impact after accounting for the background shift.
+
+\begin{definition}[Stage-II baseline]
+\label{def:Wbase}
+Following a leave-one-\emph{client}-out auditing approach~\cite{carlini2022membership}, we define the Stage-II baseline at each round as the model that includes all contributions except the target client's. Let $W_t$ denote the global model at the start of round $t$ and $B = \sum_{j \neq \tindex} u_j$ the background aggregate. The baseline is:
+\begin{equation}
+\label{eq:Wbase}
+W_{\mathrm{base}} \coloneqq W_t + B.
+\end{equation}
+$W_{\mathrm{base}}$ represents the ``null hypothesis'' state. Evaluating the score difference exactly from this baseline isolates the final step of the aggregated update:
+$ \ell(x; W_t + \Delta W) - \ell(x; W_{\mathrm{base}}) = \ell(x; W_{\mathrm{base}} + \utarget) - \ell(x; W_{\mathrm{base}}). $
+This measures the specific contribution of $\utarget$, answering how much of the empirical advantage is attributable to the target.
+\end{definition}
+
+\begin{definition}[Attributable centered advantage]
+\label{def:J}
+Define the attributable centered advantage of the target perturbation $\utarget$ at baseline $W_{\mathrm{base}}$ by
+\begin{equation}
+\label{eq:J}
+J(\utarget)
+\;\coloneqq\;
+\E_{x\sim D_{\tindex}}
+\left[
+\phi\!\left(\ell(x;W_{\mathrm{base}}+\utarget)-\ell(x;W_{\mathrm{base}})\right)
+\right].
+\end{equation}
+\end{definition}
+
+\paragraph{Interpretation.}
+$J(\utarget)>0$ means that adding $\utarget$ on top of the background increases the centered sigmoid transformation of the generative score on target data.
+This models an effect attributable to the target update in the sense used by generative MIA~\cite{Galende2025Membership}.
+
+\subsection{Local path analysis and smoothness}
+
+\begin{definition}[Local directional increment]
+\label{def:local_increment}
+For fixed $x$ and direction $\utarget\in\R^d$, define the local increment:
+\begin{equation}
+\label{eq:local_increment}
+\delta(x;\utarget)\coloneqq \ell(x;W_{\mathrm{base}}+\utarget)-\ell(x;W_{\mathrm{base}}).
+\end{equation}
+\end{definition}
+
+To analyze this macroscopic score change caused by the parameter update, we mathematically decompose the transition by integrating microscopic directional gradients along a continuous path. We first bound the smoothness of this trajectory.
+
+\begin{assumption}[Smoothness along the target segment]
+\label{ass:smooth_path}
+There exists a constant $L_{\tindex}\ge0$ such that for all $x\sim D_{\tindex}$ and any $t_1, t_2 \in [0, 1]$,
+\[
+\norm{\nabla_W \ell(x;W_{\mathrm{base}}+t_1 \utarget) - \nabla_W \ell(x;W_{\mathrm{base}}+t_2 \utarget)}
+\le L_{\tindex} \norm{\utarget} |t_1-t_2|.
+\]
+\end{assumption}
+
+\begin{lemma}[Path integral representation of score increments]
+\label{lem:path}
+Assume that for fixed $x$, the function $t\mapsto \ell(x;W_{\mathrm{base}}+t \utarget)$ is differentiable for $t\in[0,1]$.
+Then
+\begin{equation}
+\label{eq:path}
+\delta(x;\utarget)=\int_0^1 \ip{\nabla_W \ell(x;W_{\mathrm{base}}+t \utarget)}{\utarget}\,dt.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Define the path function $F(t)\coloneqq \ell(x;W_{\mathrm{base}}+t \utarget)$.
+By the fundamental theorem of calculus, $F(1)-F(0)=\int_0^1 F'(t)\,dt$.
+By the chain rule, $F'(t)=\ip{\nabla_W \ell(x;W_{\mathrm{base}}+t \utarget)}{\utarget}$.
+Substitute into the integral.
+\end{proof}
+
+\noindent To streamline the subsequent bounds, we define the directional gradient path shorthand:
+\begin{equation}
+\label{eq:grad_shorthand}
+H(t)\coloneqq \nabla_W \ell\big(x;W_{\mathrm{base}}+t\utarget\big).
+\end{equation}
+
+\begin{lemma}[First-order approximation with explicit quadratic remainder]
+\label{lem:quad_error}
+Under Assumption~\ref{ass:smooth_path}, for all $x\sim D_{\tindex}$,
+\begin{equation}
+\label{eq:delta_linear_bound}
+\big|\delta(x;\utarget) - \ip{H(0)}{\utarget}\big|
+\le \frac{L_{\tindex}}{2}\,\norm{\utarget}^2.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Fix $x\sim D_{\tindex}$.
+By Lemma~\ref{lem:path}, we represent the local increment as $\delta(x;\utarget)=\int_0^1 \ip{H(t)}{\utarget}\,dt$.
+Subtracting the initial directional gradient $\ip{H(0)}{\utarget}$ and using the linearity of the integral yields:
+\[
+\delta(x;\utarget)-\ip{H(0)}{\utarget}
+=\int_0^1 \ip{H(t)-H(0)}{\utarget}\,dt.
+\]
+We proceed to bound the absolute value of this difference using three sequential operations:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Integral triangle inequality:} 
+    \begin{equation}
+    \label{eq:pf_triangle}
+    \Big|\delta(x;\utarget)-\ip{H(0)}{\utarget}\Big|
+    \le \int_0^1 \Big|\ip{H(t)-H(0)}{\utarget}\Big|\,dt.
+    \end{equation}
+    
+    \item \textbf{Cauchy--Schwarz inequality~\cite{steele2004cauchy}:} For the integrand, we have:
+    \begin{equation}
+    \label{eq:pf_cs}
+    \Big|\ip{H(t)-H(0)}{\utarget}\Big|
+    \le \norm{H(t)-H(0)}\,\norm{\utarget}.
+    \end{equation}
+    
+    \item \textbf{Gradient smoothness:} By Assumption~\ref{ass:smooth_path}, the gradients are Lipschitz continuous along the segment:
+    \begin{equation}
+    \label{eq:pf_smooth}
+    \norm{H(t)-H(0)} \le L_{\tindex}\,\norm{t\utarget}=L_{\tindex}\,t\,\norm{\utarget}.
+    \end{equation}
+\end{enumerate}
+
+\noindent Substituting \eqref{eq:pf_cs} and \eqref{eq:pf_smooth} into the integrand of \eqref{eq:pf_triangle}, we can explicitly evaluate the integral:
+\[
+\Big|\delta(x;\utarget)-\ip{H(0)}{\utarget}\Big|
+\le \int_0^1 L_{\tindex}\,t\,\norm{\utarget}^2\,dt
+= \frac{L_{\tindex}}{2}\,\norm{\utarget}^2.
+\]
+Finally, substituting $H(0)=\nabla_W \ell(x;W_{\mathrm{base}})$ recovers the stated remainder bound.
+\end{proof}
+
+\subsection{A robust linear proxy for attribution}
+
+Lemma~\ref{lem:quad_error} bounds the difference between the true increment $\delta(x;\utarget)$ and the linear directional score
+$\ip{\nabla_W \ell(x;W_{\mathrm{base}})}{\utarget}$.
+We now transfer this control to the attributable advantage $J(\utarget)$ using Lemma~\ref{lem:sig_props}.
+
+\begin{theorem}[Robust Stage-II bound: linear proxy plus quadratic correction]
+\label{thm:robust_stage2}
+Assume $\phi$ is $\tfrac14$-Lipschitz (Lemma~\ref{lem:sig_props}) and Assumption~\ref{ass:smooth_path} holds.
+Then
+\begin{equation}
+\label{eq:robust_stage2}
+J(\utarget)
+=
+\E_{x\sim D_{\tindex}}\left[\phi\!\left(\ip{H(0)}{\utarget}\right)\right]
+\pm \frac{L_{\tindex}}{8}\norm{\utarget}^2.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Fix $x\sim D_{\tindex}$. By Lemma~\ref{lem:sig_props}, $\phi$ is $\tfrac14$-Lipschitz, so
+\[
+\left|\phi(\delta(x;\utarget))-\phi\!\left(\ip{H(0)}{\utarget}\right)\right|
+\le \frac14\left|\delta(x;\utarget)-\ip{H(0)}{\utarget}\right|.
+\]
+Apply Lemma~\ref{lem:quad_error} to bound the right-hand side by $\frac14\cdot \frac{L_{\tindex}}{2}\|\utarget\|^2=\frac{L_{\tindex}}{8}\|\utarget\|^2$:
+\[
+\left|\phi(\delta(x;\utarget))-\phi\!\left(\ip{H(0)}{\utarget}\right)\right|
+\le \frac{L_{\tindex}}{8}\|\utarget\|^2.
+\]
+Take expectations over $x\sim D_{\tindex}$ and use Jensen's inequality ($|\E[\cdot]|\le \E[|\cdot|]$) to obtain \eqref{eq:robust_stage2}.
+\end{proof}
+
+\subsection{Mean score geometry and an alignment parameter}
+
+Theorem~\ref{thm:robust_stage2} reduces attribution to the distribution of directional scores $\ip{H(0)}{\utarget}$ plus a controlled quadratic correction.
+A scalar summary is obtained by the mean score vector and its cosine alignment with $\utarget$.
+
+\begin{definition}[Mean score vector at the Stage-II baseline]
+\label{def:score}
+Define
+\begin{equation}
+\label{eq:s}
+s \coloneqq \E_{x\sim D_{\tindex}}[H(0)]\in\R^d.
+\end{equation}
+\end{definition}
+
+\begin{definition}[Target-data alignment]
+\label{def:gamma}
+Assume $\utarget\neq 0$ and $s\neq 0$. Define
+\begin{equation}
+\label{eq:gamma}
+\gamma \coloneqq \cos(\utarget,\,s)=\frac{\ip{\utarget}{s}}{\norm{\utarget}\norm{s}}\in[-1,1].
+\end{equation}
+Equivalently, $\ip{s}{\utarget}=\norm{s}\norm{\utarget}\gamma$.
+Since $\utarget=p_{\tindex}\Delta w_{\tindex}$ with $p_{\tindex}>0$ in FedAvg, $\cos(\utarget,s)=\cos(\Delta w_{\tindex},s)$.
+\end{definition}
+
+\paragraph{Interpretation.}
+The alignment $\gamma$ measures whether the target update direction increases the generative score on target data at the baseline $W_{\mathrm{base}}$.
+This is a target-data geometry quantity, distinct from the federation alignment $\lambda$ in Stage I.
+
+\subsection{A mean-score proxy and a \texorpdfstring{$\gamma$}{gamma}-dominant regime}
+
+\begin{lemma}[Mean-score proxy under concentration]
+\label{prop:mean_proxy}
+If the directional scores $\ip{H(0)}{\utarget}$ are concentrated around their mean $\ip{s}{\utarget}=\norm{s}\norm{\utarget}\gamma$, then
+the sign and magnitude of $J(\utarget)$ in \eqref{eq:robust_stage2} are governed by $\gamma$ up to the quadratic correction scale
+$\frac{L_{\tindex}}{8}\|\utarget\|^2$.
+\end{lemma}
+
+\begin{proof}
+Let $a(x) \coloneqq \ip{H(0)}{\utarget}$ denote the directional scores, with mean $\E[a] = \ip{s}{\utarget} = \norm{s}\norm{\utarget}\gamma$.
+Theorem~\ref{thm:robust_stage2} establishes that:
+\[
+J(\utarget) = \E_{x\sim D_{\tindex}}[\phi(a(x))] \pm \frac{L_{\tindex}}{8}\norm{\utarget}^2.
+\]
+We analyze the expectation term by comparing it to the evaluation of $\phi$ precisely at the mean $\E[a]$. 
+By adding and subtracting $\phi(\E[a])$, we can bound the deviation using Jensen's inequality ($|\E[\cdot]| \le \E[|\cdot|]$):
+\[
+\Big|\E_{x\sim D_{\tindex}}[\phi(a(x))] - \phi(\E[a])\Big| \le \E_{x\sim D_{\tindex}}\Big[ \big| \phi(a(x)) - \phi(\E[a]) \big| \Big].
+\]
+By Lemma~\ref{lem:sig_props}, the centered sigmoid transformation $\phi$ is $L_\phi$-Lipschitz continuous with $L_\phi = \frac{1}{4}$, implying:
+\[
+\big| \phi(a(x)) - \phi(\E[a]) \big| \le \frac{1}{4} \big| a(x) - \E[a] \big|.
+\]
+Substituting this bound into the expectation yields:
+\[
+\Big|\E_{x\sim D_{\tindex}}[\phi(a(x))] - \phi(\E[a])\Big| \le \frac{1}{4} \E_{x\sim D_{\tindex}}\Big[ \big| a(x) - \E[a] \big| \Big].
+\]
+The right-hand side is the expected absolute deviation. Applying the Cauchy--Schwarz inequality~\cite{steele2004cauchy}, we introduce the variance $\mathrm{Var}(a)$ associated with the data distribution:
+\[
+\E_{x\sim D_{\tindex}}\Big[ \big| a(x) - \E[a] \big| \Big] \le \sqrt{\mathrm{Var}(a)}.
+\]
+Thus, the leading expectation term evaluates to exactly:
+\[
+\E_{x\sim D_{\tindex}}[\phi(a(x))] = \phi(\norm{s}\norm{\utarget}\gamma) \pm \frac{1}{4}\sqrt{\mathrm{Var}(\ip{H(0)}{\utarget})}.
+\]
+We substitute this concentrated evaluation back into the overarching bound from Theorem~\ref{thm:robust_stage2}, resulting in a complete algebraic decomposition mapping attribution to alignment:
+\[
+J(\utarget) = \phi(\norm{s}\norm{\utarget}\gamma) \pm \left( \frac{1}{4}\sqrt{\mathrm{Var}(\ip{H(0)}{\utarget})} + \frac{L_{\tindex}}{8}\norm{\utarget}^2 \right).
+\]
+Therefore, if the variance of the directional scores is sufficiently small (high concentration), the proxy converges to $\phi(\norm{s}\norm{\utarget}\gamma)$. In this concentrated regime, the alignment parameter $\gamma$ dictates the sign and governs the magnitude of the attribution, up to the fixed quadratic correction $\frac{L_{\tindex}}{8}\norm{\utarget}^2$.
+\end{proof}
+
+\begin{lemma}[Sufficient condition for positive attribution risk]
+\label{lem:gamma_dom}
+Assume $s\neq 0$ and $\utarget\neq 0$. If $\gamma>0$ and
+\begin{equation}
+\label{eq:gamma_dom}
+\norm{\utarget} < \frac{2\,\norm{s}\,\gamma}{L_{\tindex}},
+\end{equation}
+then the attribution proxy $\widehat{J}_m$ is strictly guaranteed to be positive, provided the directional scores $a(x)$ are sufficiently concentrated around their mean (as per Lemma~\ref{prop:mean_proxy}). 
+This provides an absolute condition under which the positive alignment ($\gamma>0$) mathematically overpowers the worst-case quadratic error resulting from trajectory curvature.
+\end{lemma}
+
+\begin{proof}
+By Theorem~\ref{thm:robust_stage2}, the worst-case error bound on the un-transformed local increment $\delta(x; u)$ is $\frac{L_{\tindex}}{2}\norm{\utarget}^2$. 
+In the concentrated regime (Lemma~\ref{prop:mean_proxy}), the expected linear pre-sigmoid signal is exactly $\E[a] = \ip{s}{\utarget} = \norm{s}\norm{\utarget}\gamma > 0$.
+The total pre-sigmoid signal, including the worst-case negative approximation error, is strictly bounded from below by the difference:
+\[
+z_{\text{min}} = \norm{s}\norm{\utarget}\gamma - \frac{L_{\tindex}}{2}\norm{\utarget}^2.
+\]
+Because the centered sigmoid $\phi(z)$ is a strictly monotonically increasing function with $\phi(0) = 0$ (Lemma~\ref{lem:sig_props}), any strictly positive input $z_{\text{min}} > 0$ guarantees a strictly positive output $\phi(z_{\text{min}}) > 0$.
+Therefore, to guarantee positive attribution, it is necessary and sufficient that this worst-case pre-sigmoid sum remains strictly positive:
+\[
+\norm{s}\norm{\utarget}\gamma - \frac{L_{\tindex}}{2}\norm{\utarget}^2 > 0.
+\]
+Because the update vector is non-zero ($\norm{\utarget} > 0$), we can rearrange the inequality by dividing by $\norm{\utarget}$:
+\[
+\norm{s}\gamma > \frac{L_{\tindex}}{2}\norm{\utarget}.
+\]
+Isolating $\norm{\utarget}$ yields the exact bound:
+\[
+\norm{\utarget} < \frac{2\norm{s}\gamma}{L_{\tindex}}.
+\]
+This mathematically guarantees a net positive pre-sigmoid signal, which the strictly increasing property of $\phi$ translates into a guaranteed positive attribution risk, requiring no linear approximations.
+\end{proof}
+
+\section{A joint two-stage metric for MIA risk}
+\label{sec:two_stage_metric}
+
+Stage I describes whether the target component survives aggregation strongly enough to be detectable under the observation model \eqref{eq:obs}.
+Stage II describes whether this surviving component produces an attributable change in a generative membership score on the target dataset.
+We summarize both stages with a single probability-of-success metric that accounts for (i) round-to-round variation in the background aggregate $B$
+and (ii) finite-sample estimation of attribution on $D_{\tindex}$.
+
+\subsection{Round-level survival statistic.}
+Recall the decomposition $\Delta W=\utarget+B$ from \eqref{eq:decomp}.
+Define the round-dependent signal-to-update ratio
+\begin{equation}
+\label{eq:sur_B}
+\mathrm{SUR}(B)\coloneqq \frac{\norm{\utarget}}{\norm{\utarget+B}},
+\end{equation}
+and the survival event
+\begin{equation}
+\label{eq:event_survival}
+\mathcal{S}\coloneqq \{\mathrm{SUR}(B)>\tau_{\mathrm{noise}}\},
+\end{equation}
+where $\tau_{\mathrm{noise}}>0$ is the noise-floor threshold from Assumption~\ref{cond:noise}.
+Here $B$ is treated as random across rounds due to client sampling, heterogeneity, and optimization noise.
+
+\subsection{Finite-sample attribution estimator.}
+For a given round (hence fixed $B$) and a target example $x$, define the score increment
+\begin{equation}
+\label{eq:delta_B}
+\delta(x;\utarget,B)\coloneqq \ell\!\big(x;W_{\mathrm{base}}+\utarget\big)-\ell\!\big(x;W_{\mathrm{base}}\big),
+\qquad W_{\mathrm{base}}=W_t+B \ \text{as in \eqref{eq:Wbase}}.
+\end{equation}
+Given $m\ge 1$ samples $x_1,\dots,x_m\sim D_{\tindex}$ drawn i.i.d., define the empirical Stage-II advantage
+\begin{equation}
+\label{eq:Jhat}
+\widehat{J}_m(\utarget;B)
+\coloneqq
+\frac{1}{m}\sum_{i=1}^m \phi\!\big(\delta(x_i;\utarget,B)\big).
+\end{equation}
+This is the finite-sample analogue of $J(\utarget)$ in Definition~\ref{def:J}.
+
+\subsection{Two-stage success probability.}
+Define the attribution event at sample size $m$ by
+\begin{equation}
+\label{eq:event_attr}
+\mathcal{A}_m\coloneqq \{\widehat{J}_m(\utarget;B)>0\}.
+\end{equation}
+We define the joint two-stage metric as the probability (over both round-to-round variability in $B$ and the draw of target samples)
+that the target contribution is simultaneously detectable and attributable:
+\begin{equation}
+\label{eq:two_stage_metric}
+\mathrm{TS\text{-}MIA}_m
+\;\coloneqq\;
+\Pr\big(\mathcal{S}\cap \mathcal{A}_m\big)
+\;=\;
+\Pr\!\big(\mathrm{SUR}(B)>\tau_{\mathrm{noise}} \ \wedge\  \widehat{J}_m(\utarget;B)>0\big).
+\end{equation}
+By the definition of conditional probability, $\mathrm{TS\text{-}MIA}_m=\Pr(\mathcal{S})\,\Pr(\mathcal{A}_m\mid \mathcal{S})$, reflecting the two-stage interpretation:
+survival is necessary for detectability, and attribution is only evaluated---and only meaningful---conditional on survival.
+
+\begin{remark}[Interpretation and limiting cases]
+\label{rem:two_stage_metric_interp}
+The metric $\mathrm{TS\text{-}MIA}_m$ summarizes MIA risk at the round level.
+It increases when (i) aggregation cancellation is weak (so $\mathrm{SUR}(B)$ is often above $\tau_{\mathrm{noise}}$) and
+(ii) the target update tends to increase the centered generative advantage on $D_{\tindex}$ (so $\widehat{J}_m(\utarget;B)>0$ often holds).
+As $m\to\infty$, under standard laws of large numbers, $\widehat{J}_m(\utarget;B)$ concentrates around
+$J(\utarget)$ from \eqref{eq:J}, so $\mathrm{TS\text{-}MIA}_m$ approaches the round-level probability
+$\Pr\big(\mathrm{SUR}(B)>\tau_{\mathrm{noise}} \ \wedge\  J(\utarget)>0\big)$ whenever $J(\utarget)$ is well-defined.
+\end{remark}
+
+\section{Empirical Verification}
+\label{sec:sim_results}
+
+This section summarizes the empirical verification figures. Each figure is accompanied by a concise description
+of the experimental setup and the qualitative outcome visible in the plot.
+
+\subsection{Stage I: SUR geometry and cancellation}
+\paragraph{Setup.}
+We construct synthetic target/background pairs in $\R^{100}$ over a grid of $r\in[0.01,16]$ (80 values) and
+$\lambda\in[-1,1]$ (80 values). With a unit target direction $\hat{u}$ and an orthogonal vector $v_{\perp}$,
+we set $B=r(\lambda \hat{u}+\sqrt{1-\lambda^2}v_{\perp})$, compute $\Delta W=\hat{u}+B$, and compare
+$\mathrm{SUR}=\|\hat{u}\|/\|\Delta W\|$ to the closed form in Lemma~\ref{prop:sur_closed}. The figure
+uses a log color scale, restricts to $r\le 6$ for visibility, and marks the cancellation region
+$\|\Delta W\|<\varepsilon$ with $\varepsilon=0.3$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{verify_sur_geometry.png}
+    \caption{\textbf{Stage I SUR geometry.} Log-scaled heatmap of $\mathrm{SUR}=\|u\|/\|\Delta W\|$ over $(\lambda,r)$ with $r = \|B\|/\|u\|$, and a red overlay
+    indicating the cancellation region $\|\Delta W\|<\varepsilon$. High SUR occurs when the background is small
+    ($r\to 0$) or cooperative ($\lambda > 0$), while the cancellation band near $\lambda\approx -1$ and $r\approx 1$
+    highlights where $\Delta W$ is near-zero and detectability becomes noise-limited.}
+    \label{fig:sur_geometry}
+\end{figure}
+
+\paragraph{Result.}
+The heatmap exhibits the expected ridge of high SUR at small $r$, consistent with target dominance, and a distinct
+cancellation band where $\Delta W$ vanishes, consistent with the closed form
+$\mathrm{SUR}^2 = 1/(1+r^2+2r\lambda)$ in \eqref{eq:sur_r}.
+From the detectability standpoint (Assumption~\ref{cond:noise}), the region where $\mathrm{SUR}>\tau_{\mathrm{noise}}$ shrinks as the background magnitude $r$ grows: for $r\ll 1$ the target dominates $\Delta W$ and detectability is virtually guaranteed regardless of alignment, whereas for $r\gtrsim 1$ with adversarial alignment ($\lambda\approx -1$) the aggregate approaches cancellation and the signal drops below the noise floor, rendering the target contribution undetectable.
+
+\subsection{Stage II: Smoothness bound verification}
+\paragraph{Setup.}
+This experiment verifies Lemma~\ref{lem:quad_error} and Theorem~\ref{thm:robust_stage2} in Section~\ref{sec:stage2}.
+We use PathMNIST (train split) and a VAE with $3$ input channels, latent dimension $32$, and $10$ classes.
+Inputs are scaled by $1/255$, and double precision is used during perturbation checks.
+We use $50$ images and $30$ perturbation scales. In this setup, let $g_{\text{loss}}=\nabla(\mathrm{loss})$ and note
+that the score gradient is $\nabla\ell=-g_{\text{loss}}$. We define the unit score-gradient
+$\hat{g}=\nabla\ell/\|\nabla\ell\|$ (equivalently, $-\!g_{\text{loss}}/\|g_{\text{loss}}\|$) and use perturbations
+$v=(\alpha/\|\nabla\ell\|)\hat{g}$ with $\alpha\sim\mathrm{Uniform}(0.01,2.0)$.
+We sort the 30 scales and index them in ascending order; scales with odd indices ($1,3,5,\ldots,29$) form a calibration set to estimate $L$ via
+$L_{\text{cal}}=\max(2\,\mathrm{err}/\|v\|^2)$, and even-indexed scales form a test set to verify the quadratic
+bound $\frac{L_{\text{cal}}}{2}\|v\|^2$. We report a 95\% Wilson CI~\cite{wilson1927probable} for the pooled test-point violation rate.
+In this setup, the theoretical score $\ell$ is instantiated as the negative VAE loss (i.e., $\ell=-\mathrm{loss}$).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\linewidth]{verify_attribution_bound.png}
+    \caption{\textbf{Stage II smoothness bound.} Test errors vs.\ update norm $\|u\|$ with the quadratic bound
+    estimated from calibration points. The log--log scale highlights the expected quadratic scaling; the
+    text box in the figure reports the empirical violation rate and its 95\% CI.}
+    \label{fig:attr_bound}
+\end{figure}
+
+\paragraph{Result.}
+Most test points lie beneath the calibrated quadratic bound, consistent with the smoothness-based approximation
+used in Stage II. The overall test violation rate is $6.7\%$ with a 95\% Wilson CI of $[5.1\%, 8.7\%]$,
+computed over all test points pooled across trials. The median empirical smoothness constant is $7.42\times 10^{3}$.
+
+\subsection{Stage II geometry: Attribution vs.\ alignment}
+\paragraph{Setup.}
+We use a single PathMNIST sample and compute the VAE gradient $g$ at the baseline parameters.
+We construct a 2D subspace spanned by $g/\|g\|$ and an orthogonal vector. For
+alignments $\cos\theta$ over $\theta\in[0,\pi]$ (50 points), we evaluate attribution $J(v)$ for magnitudes
+chosen so that the linear predictor $z=\|g\|\|v\|\cos\theta$ spans the sigmoid transition region.
+Concretely, we set $\|v\|=\tau/\|g\|$ with $\tau\in\{0.1,0.5,1,2,4\}$ so that $|z|$ reaches
+$\{0.1,0.5,1,2,4\}$ at $|\cos\theta|=1$. VAE noise is controlled with a fixed seed (42).
+The linear proxy is $-\|g\|\|v\|\cos\theta$ passed through the centered sigmoid.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\linewidth]{stage_two_geometry.png}
+    \caption{\textbf{Stage II geometry.} $J(v)$ vs.\ alignment for multiple update magnitudes, with the linear
+    proxy overlaid.}
+    \label{fig:stage2_geometry}
+\end{figure}
+
+\paragraph{Result.}
+Small-magnitude perturbations track the linear proxy closely, while larger magnitudes show controlled saturation.
+This supports the linear-plus-quadratic approximation in the regime where $\|v\|$ is modest.
+
+\subsection{Risk trajectories across FL scenarios}
+\paragraph{Setup.}
+We simulate FedAvg with $K=5$ clients, $20$ rounds, $3$ local epochs, and Adam at learning rate $10^{-3}$.
+Clients train a VAE on PathMNIST (train split) with a data limit of $2000$ and inputs scaled by $1/255$.
+A run seed ($1288544768$ in this run) generates $5$ per-scenario seeds, each reinitializing NumPy, Python, and
+PyTorch RNGs before partitioning and training. Each round starts from the current global model; each client performs
+local training and produces $\Delta w_k$; the server averages updates (FedAvg with $p_k=1/K$) to form $\Delta W$ and
+updates the global model. We compute per-client $\mathrm{SUR}=\|(1/K)\Delta w_k\|/\|\Delta W\|$ and $J$ via score
+differences between the background baseline and the full update. Scenarios are \textbf{IID} (random partition),
+\textbf{Non-IID} (label-sorted partition), and \textbf{Inverted} (all non-target clients use inverted images).
+We report mean trajectories with bootstrap CIs across seeds for the indicator
+$\mathbf{1}\{\mathrm{SUR}>\tau_{\mathrm{noise}}\wedge J>0\}$ with $\tau_{\mathrm{noise}}=0.1$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\linewidth]{risk_trajectory.png}
+    \caption{\textbf{Risk trajectories.} Mean TS-MIA detection rate across rounds for IID, Non-IID, and Inverted
+    scenarios. Shaded regions denote bootstrap confidence bands across seeds.}
+    \label{fig:risk_trajectory}
+\end{figure}
+
+\paragraph{Result.}
+In this run, the per-round mean detection rate for IID starts at $1$ and quickly decays to $0$ (by mid-rounds),
+Non-IID stays at $1$ throughout, and Inverted shows an intermediate, high-variance trajectory
+(roughly $0.36$--$1.0$ across rounds). All scenarios have $\mathrm{SUR}>\tau_{\mathrm{noise}}$ throughout, so the
+differences are driven by the sign of $J$: Non-IID stays positive round-by-round, while IID and Inverted
+exhibit negative $J$ episodes that reduce detection.
+
+\subsection{Non-IID example image and per-round metrics}
+\paragraph{Setup.}
+We display a representative PathMNIST image drawn from the Non-IID partition (client 0, sample 0,
+with the label shown). The right panel plots three per-round metrics for the Non-IID scenario:
+mean Risk (TS-MIA), mean SUR, and mean $J$, each averaged across clients and seeds with shared y-axis bounds.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{non_iid_image_risk.png}
+    \caption{\textbf{Non-IID example and metrics.} (Left) A representative pathMNIST sample (Client 0, Label 6) from a label-skewed partition. (Right) The Non-IID mean Risk, mean SUR, and mean $J$ across rounds.}
+    \label{fig:non_iid_image_risk}
+\end{figure}
+
+\paragraph{Result.}
+In the Non-IID case, mean Risk is $1.0$ across rounds, with mean SUR around $0.23$ (range $0.20$--$0.27$) and
+mean $J$ consistently positive (range $0.010$--$0.50$). Because both conditions of the two-stage metric
+are met in every round---$\mathrm{SUR}>\tau_{\mathrm{noise}}$ (the target survives aggregation) and $J>0$
+(the score advantage is positive)---the attack succeeds with certainty and $\mathrm{TS\text{-}MIA}$ saturates
+at~$1$. This confirms that Non-IID label skew creates a consistently vulnerable regime: the target client's
+update is sufficiently dissimilar from the background to remain both detectable and attributable across all
+federated rounds.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# uv
+# uv.lock
+
+# Results (generated)
+results/*.json
+
+# Data (downloaded)
+/data/
+
+# LaTeX build files
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+
+.DS_Store
