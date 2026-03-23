@@ -1,6 +1,6 @@
-# Theory Simulation Standalone
+# The Geometry of Privacy: A Two-Stage Analysis of Generative Membership Inference in Federated Learning
 
-This folder contains everything needed to run the theory simulation (`simulate_results.py`) with uv.
+This is the repo implementing the experiments. It contains everything needed to run the theory simulation (`simulate_results.py`) with uv.
 
 ## Setup
 
