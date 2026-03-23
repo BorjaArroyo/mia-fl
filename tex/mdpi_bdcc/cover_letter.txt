@@ -1,0 +1,36 @@
+Cover Letter
+
+To the Editor-in-Chief
+Big Data and Cognitive Computing (MDPI)
+
+Subject: Submission of our manuscript, "The Geometry of Privacy: A Two-Stage Analysis of Generative Membership Inference in Federated Learning"
+
+Dear Editor,
+
+We are pleased to submit our original research article entitled "The Geometry of Privacy: A Two-Stage Analysis of Generative Membership Inference in Federated Learning" for consideration for publication in Big Data and Cognitive Computing (BDCC).
+
+In the current landscape of decentralized intelligence—where edge networks and smart clouds increasingly collaborate through Federated Learning (FL)—guaranteeing the confidentiality of sensitive datasets (e.g., in healthcare and finance) has become paramount. While traditional auditing evaluates privacy vulnerabilities end-to-end, it structurally conflates the system-level masking provided by federation with the intrinsic generative vulnerability of a specific data sample. 
+
+In this manuscript, we present a novel, two-stage geometric framework to rigorously deconstruct Membership Inference Attacks (MIA) in Federated Generative Models. Specifically, we:
+1. Model Signal Survival (Stage I) by formalizing the specific target-background alignments that govern whether a client's update avoids destructive cancellation during robust federation. 
+2. Derive Signal Attribution (Stage II) by establishing Lipschitz/smoothness bounds that trace how a surviving update dynamically influences a generative membership score.
+
+Liaison with BDCC's Scope:
+We chose Big Data and Cognitive Computing because our work aligns perfectly with the journal's foundational aims to explore Big Data Integrity and Privacy, Big Data Models, Algorithms, and Architecture, and Deep Learning applications. As federated environments scale across institutional silos, the capacity to trust decentralized algorithms hinges on mathematically isolating privacy leakage. By transitioning from monolithic empirical auditing to bounded, geometric privacy trajectories (TS-MIA), our methodology provides scalable tools essential for data-driven precision medicine and secure cognitive infrastructures. 
+
+Our research builds directly upon our ongoing efforts at the Universidad Politécnica de Madrid (IPTC) involving synthetic tabular generation and privacy-preserving machine learning within medical ecosystems. We believe this geometric formalization of privacy attacks answers BDCC's explicit call for innovations in large-scale data integrity and advanced machine intelligence.
+
+This manuscript has not been published and is not under consideration for publication elsewhere. All authors have read and approved the manuscript, and there are no conflicts of interest to declare. 
+
+Thank you for your time and consideration of our work. We look forward to your valuable feedback.
+
+Sincerely,
+
+Borja Arroyo Galende
+On behalf of the authors: P.A. Apellániz, A. Almodóvar, S. Uribe, F. Álvarez, and J. Parras.
+
+Information Processing and Telecommunications Center (IPTC)
+Escuela Técnica Superior de Ingeniería de Telecomunicación
+Universidad Politécnica de Madrid (UPM)
+Madrid, Spain
+Correspondence: borja.arroyog@upm.es

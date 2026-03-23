@@ -23,3 +23,4 @@ results/*.json
 *.out
 
 .DS_Store
+MDPI_Submission.zip
